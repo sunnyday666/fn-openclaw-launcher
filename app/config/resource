@@ -1,0 +1,27 @@
+{
+    "data-share": {
+        "shares": [
+            {
+                "name": "trim.openclaw",
+                "permission": {
+                    "rw": [
+                        "trim.openclaw"
+                    ]
+                }
+            },
+            {
+                "name": "trim.openclaw/data",
+                "permission": {
+                    "rw": [
+                        "trim.openclaw"
+                    ]
+                }
+            }
+        ]
+    },
+    "usr-local-linker": {
+        "bin": [
+            "/bin/openclaw"
+        ]
+    }
+}

@@ -1,0 +1,85 @@
+#!/bin/bash
+
+### This script is called after the user upgrades the application.
+
+set -e
+
+log_msg() {
+    echo "$(date '+%Y-%m-%d %H:%M:%S') - $1"
+}
+
+OPENCLAW_DATA_DIR="${TRIM_PKGHOME}/data"
+STATE_DIR="${OPENCLAW_DATA_DIR}/state"
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+APP_ROOT="$(dirname "$SCRIPT_DIR")"
+BOOTSTRAP_DIR="${APP_ROOT}/config/bootstrap"
+
+seed_models_catalog_snapshot() {
+    local snapshot_src="${BOOTSTRAP_DIR}/models-catalog.snapshot.json"
+    local meta_src="${BOOTSTRAP_DIR}/models-catalog.snapshot.meta.json"
+    local snapshot_dst="${STATE_DIR}/models-catalog.snapshot.json"
+    local meta_dst="${STATE_DIR}/models-catalog.snapshot.meta.json"
+
+    mkdir -p "${STATE_DIR}"
+
+    if [ ! -f "${snapshot_src}" ]; then
+        return 0
+    fi
+
+    if should_seed_models_catalog_snapshot "${meta_src}" "${snapshot_dst}" "${meta_dst}"; then
+        cp "${snapshot_src}" "${snapshot_dst}"
+        log_msg "Seeded models catalog snapshot to ${snapshot_dst}"
+        if [ -f "${meta_src}" ]; then
+            cp "${meta_src}" "${meta_dst}"
+            log_msg "Seeded models catalog meta to ${meta_dst}"
+        fi
+    else
+        log_msg "Kept existing models catalog snapshot at ${snapshot_dst}"
+    fi
+}
+
+models_catalog_meta_fetched_at() {
+    local meta_path="$1"
+
+    if [ ! -f "${meta_path}" ]; then
+        printf '%s\n' 0
+        return 0
+    fi
+
+    awk -F: '
+        /"fetchedAt"/ {
+            value = $2
+            gsub(/[^0-9]/, "", value)
+            print (value == "" ? 0 : value)
+            found = 1
+            exit
+        }
+        END {
+            if (!found) {
+                print 0
+            }
+        }
+    ' "${meta_path}" 2>/dev/null || printf '%s\n' 0
+}
+
+should_seed_models_catalog_snapshot() {
+    local meta_src="$1"
+    local snapshot_dst="$2"
+    local meta_dst="$3"
+
+    if [ ! -f "${snapshot_dst}" ]; then
+        return 0
+    fi
+
+    local src_fetched_at
+    local dst_fetched_at
+    src_fetched_at="$(models_catalog_meta_fetched_at "${meta_src}")"
+    dst_fetched_at="$(models_catalog_meta_fetched_at "${meta_dst}")"
+
+    [ "${src_fetched_at}" -gt 0 ] && [ "${src_fetched_at}" -gt "${dst_fetched_at}" ]
+}
+
+seed_models_catalog_snapshot
+
+exit 0

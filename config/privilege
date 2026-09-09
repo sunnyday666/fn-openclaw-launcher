@@ -1,0 +1,8 @@
+{
+    "defaults":
+    {
+        "run-as": "package"
+    },
+    "username": "openclaw.launcher",
+    "groupname": "openclaw.launcher"
+}

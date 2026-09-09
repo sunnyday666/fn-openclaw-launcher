@@ -1,0 +1,65 @@
+#!/bin/bash
+
+### This script is called before the user uninstalls the application.
+### Stop openclaw process and clean up its installation.
+
+LOG_FILE="${TRIM_PKGVAR}/uninstall.log"
+
+log_msg() {
+    echo "$(date '+%Y-%m-%d %H:%M:%S') - $1" >> "$LOG_FILE"
+}
+
+DATA_DIR="${TRIM_PKGHOME}"
+OPENCLAW_DIR="${DATA_DIR}/data/openclaw"
+OPENCLAW_ENV="${OPENCLAW_DIR}/.env"
+
+# Kill running openclaw process (find by port from .env)
+if [ -f "$OPENCLAW_ENV" ]; then
+    source "$OPENCLAW_ENV"
+    if [ -n "$PORT" ]; then
+        pid=$(lsof -ti :"$PORT" 2>/dev/null || true)
+        if [ -n "$pid" ]; then
+            log_msg "Stopping openclaw (PID: $pid, PORT: $PORT)..."
+            kill -TERM $pid 2>/dev/null
+            sleep 2
+            kill -KILL $pid 2>/dev/null || true
+            log_msg "openclaw stopped."
+        fi
+    fi
+fi
+
+# Fallback: the managed gateway uses a dynamic port (not in .env), so kill by process name.
+# Use pgrep + pkill with --exact to avoid matching unrelated processes.
+log_msg "Stopping managed openclaw gateway / monitor processes ..."
+
+# Find PIDs for openclaw-gateway and openclaw.launcher server
+for pattern in "openclaw-gateway" "openclaw.launcher/server/index.js"; do
+    for pid in $(pgrep -f "$pattern" 2>/dev/null); do
+        if [ -n "$pid" ]; then
+            log_msg "Sending TERM to PID $pid ($pattern)..."
+            kill -TERM "$pid" 2>/dev/null || true
+        fi
+    done
+done
+
+sleep 2
+
+for pattern in "openclaw-gateway" "openclaw.launcher/server/index.js"; do
+    for pid in $(pgrep -f "$pattern" 2>/dev/null); do
+        if [ -n "$pid" ]; then
+            log_msg "Sending KILL to PID $pid ($pattern)..."
+            kill -KILL "$pid" 2>/dev/null || true
+        fi
+    done
+done
+
+log_msg "managed processes stopped."
+
+# Remove openclaw installation
+if [ -d "$OPENCLAW_DIR" ]; then
+    log_msg "Removing openclaw installation: $OPENCLAW_DIR"
+    rm -rf "$OPENCLAW_DIR"
+    log_msg "openclaw removed."
+fi
+
+exit 0
