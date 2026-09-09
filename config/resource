@@ -1,0 +1,27 @@
+{
+    "data-share": {
+        "shares": [
+            {
+                "name": "openclaw.launcher",
+                "permission": {
+                    "rw": [
+                        "openclaw.launcher"
+                    ]
+                }
+            },
+            {
+                "name": "openclaw.launcher/data",
+                "permission": {
+                    "rw": [
+                        "openclaw.launcher"
+                    ]
+                }
+            }
+        ]
+    },
+    "usr-local-linker": {
+        "bin": [
+            "/bin/openclaw"
+        ]
+    }
+}

@@ -1,0 +1,10 @@
+#!/bin/bash
+
+### This script is called after the user uninstalls the application.
+
+if [ "${wizard_delete_data}" = "true" ]; then
+    rm -rf "${TRIM_PKGHOME}/data"
+fi
+
+
+exit 0

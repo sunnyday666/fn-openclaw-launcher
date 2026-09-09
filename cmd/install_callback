@@ -1,0 +1,369 @@
+#!/bin/bash
+
+### This script is called after the user installs the application.
+### It pre-installs OpenClaw into the data directory so the monitor
+### finds a ready binary on first launch (user only needs to click "Start").
+
+set -e
+
+export PATH=/var/apps/bunjs/target/bin:/var/apps/nodejs_v24/target/bin:$PATH
+
+log_msg() {
+    echo "$(date '+%Y-%m-%d %H:%M:%S') - $1"
+}
+
+toast_err() {
+    echo "$*" > "$TRIM_TEMP_LOGFILE"
+}
+
+read_default_openclaw_version() {
+    local version_file="$1"
+
+    if [ -f "${version_file}" ]; then
+        (
+            # shellcheck disable=SC1090
+            . "${version_file}"
+            printf '%s\n' "${OPENCLAW_VERSION:-}"
+        )
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# Compute the same OPENCLAW_DATA_DIR that main uses at runtime:
+#   TRIM_PKGHOME = /var/apps/openclaw.launcher/home (@apphome)
+# ---------------------------------------------------------------------------
+OPENCLAW_DATA_DIR="${TRIM_PKGHOME}/data"
+
+# Default instance directories – must match instances.ts buildDefaultInstance()
+INSTALL_DIR="${OPENCLAW_DATA_DIR}/openclaw"
+HOME_DIR="${OPENCLAW_DATA_DIR}/home"
+RUNTIME_DIR="${OPENCLAW_DATA_DIR}/runtime"
+STATE_DIR="${OPENCLAW_DATA_DIR}/state"
+WORKSPACE_DIR="${OPENCLAW_DATA_DIR}/workspace"
+MONITOR_DIR="${OPENCLAW_DATA_DIR}/monitor"
+
+# Bun uses a dedicated HOME / cache so package installs stay inside app data
+BUN_HOME="${INSTALL_DIR}/.bun-home"
+OPENCLAW_NPM_REGISTRY="${OPENCLAW_NPM_REGISTRY:-https://registry.npmmirror.com/}"
+
+# Resolve SOUL.md shipped with this package
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+APP_ROOT="$(dirname "$SCRIPT_DIR")"
+APP_DIR="${TRIM_APPDEST:-${APP_ROOT}/app}"
+SOUL_MD_SRC="${APP_ROOT}/config/prompts/SOUL.md"
+BOOTSTRAP_DIR="${APP_ROOT}/config/bootstrap"
+OPENCLAW_VERSION_FILE="${APP_ROOT}/config/openclaw-version.env"
+HOME_BIN_DIR="${TRIM_PKGHOME}/bin"
+SYSTEM_OPENCLAW_WRAPPER="${TRIM_APPDEST}/bin/openclaw"
+
+DEFAULT_OPENCLAW_VERSION="$(read_default_openclaw_version "${OPENCLAW_VERSION_FILE}")"
+OPENCLAW_VERSION="${OPENCLAW_VERSION:-${DEFAULT_OPENCLAW_VERSION:-latest}}"
+
+# 解析「最新兼容版本」: openclaw@latest 可能要求比本机更高的 Node(例如 2026.9.3 要求 Node>=24.16,
+# 而 fnOS nodejs_v24 常为 24.15), 直接装 latest 会导致网关无法启动。这里按本机 Node 版本从
+# registry 里挑出「满足 engines.node 的最新稳定版」。
+resolve_compatible_openclaw_version() {
+    local node_version
+    node_version="$(node --version 2>/dev/null | sed 's/^v//')"
+    if [ -z "${node_version}" ]; then
+        printf '%s\n' "latest"
+        return 0
+    fi
+    bun -e '
+      const local = process.argv[1] || "";
+      const reg = (process.argv[2] || "https://registry.npmmirror.com/").replace(/\/+$/, "") + "/";
+      try {
+        const res = await fetch(reg + "openclaw");
+        if (!res.ok) { console.log("latest"); process.exit(0); }
+        const data = await res.json();
+        const all = data && data.versions ? data.versions : {};
+        const stable = Object.keys(all).filter((v) => /^[0-9]{4}\.[0-9]+\.[0-9]+$/.test(v));
+        stable.sort((a, b) => Bun.semver.order(b, a));
+        for (const v of stable) {
+          const eng = all[v] && all[v].engines ? all[v].engines.node : undefined;
+          if (!eng || Bun.semver.satisfies(local, eng)) { console.log(v); process.exit(0); }
+        }
+      } catch {}
+      console.log("latest");
+    ' "${node_version}" "${OPENCLAW_NPM_REGISTRY}" 2>/dev/null | head -1
+}
+
+if [ "${OPENCLAW_VERSION}" = "latest" ]; then
+    RESOLVED_OPENCLAW_VERSION="$(resolve_compatible_openclaw_version)"
+    if [ -n "${RESOLVED_OPENCLAW_VERSION}" ]; then
+        OPENCLAW_VERSION="${RESOLVED_OPENCLAW_VERSION}"
+    fi
+    log_msg "Resolved latest-compatible OpenClaw version: ${OPENCLAW_VERSION} (Node $(node --version 2>/dev/null))"
+fi
+OPENCLAW_PACKAGE_SPEC="openclaw@${OPENCLAW_VERSION}"
+
+write_managed_package_json() {
+    local package_json_path="${INSTALL_DIR}/package.json"
+    PACKAGE_JSON_PATH="${package_json_path}" \
+    PATCHED_BAILEYS_TARBALL="${PATCHED_BAILEYS_TARBALL:-}" \
+    PATCHED_LIBSIGNAL_TARBALL="${PATCHED_LIBSIGNAL_TARBALL:-}" \
+    node -e '
+const fs = require("fs");
+const packageJsonPath = process.env.PACKAGE_JSON_PATH;
+const baileys = process.env.PATCHED_BAILEYS_TARBALL || "";
+const libsignal = process.env.PATCHED_LIBSIGNAL_TARBALL || "";
+
+let pkg = { name: "managed-openclaw", private: true };
+if (fs.existsSync(packageJsonPath)) {
+  try {
+    pkg = JSON.parse(fs.readFileSync(packageJsonPath, "utf8"));
+  } catch {
+    pkg = { name: "managed-openclaw", private: true };
+  }
+}
+
+if (!pkg.name) {
+  pkg.name = "managed-openclaw";
+}
+pkg.private = true;
+
+const overrides = pkg.overrides && typeof pkg.overrides === "object" && !Array.isArray(pkg.overrides)
+  ? { ...pkg.overrides }
+  : {};
+
+if (baileys && libsignal) {
+  overrides["@whiskeysockets/baileys"] = `file:${baileys}`;
+  overrides.libsignal = `file:${libsignal}`;
+} else {
+  if (typeof overrides["@whiskeysockets/baileys"] === "string" && overrides["@whiskeysockets/baileys"].startsWith("file:")) {
+    delete overrides["@whiskeysockets/baileys"];
+  }
+  if (typeof overrides.libsignal === "string" && overrides.libsignal.startsWith("file:")) {
+    delete overrides.libsignal;
+  }
+}
+
+if (Object.keys(overrides).length > 0) {
+  pkg.overrides = overrides;
+} else {
+  delete pkg.overrides;
+}
+
+fs.writeFileSync(packageJsonPath, `${JSON.stringify(pkg, null, 2)}\n`);
+'
+}
+
+run_bundled_plugin_postinstall() {
+    local package_root="${INSTALL_DIR}/node_modules/openclaw"
+    local stage_script="${package_root}/scripts/postinstall-bundled-plugins.mjs"
+
+    if [ ! -d "${package_root}" ]; then
+        log_msg "OpenClaw package root missing; cannot run bundled plugin postinstall"
+        toast_err "OpenClaw 安装成功，但 OpenClaw package root 缺失"
+        exit 1
+    fi
+
+    if [ ! -f "${stage_script}" ]; then
+        log_msg "Bundled plugin postinstall script not found at ${stage_script}; skipping explicit postinstall"
+        return 0
+    fi
+
+    log_msg "Running OpenClaw bundled plugin postinstall script ${stage_script}"
+    OPENCLAW_STATE_DIR="${STATE_DIR}" \
+    OPENCLAW_CONFIG_PATH="${HOME_DIR}/.openclaw/openclaw.json" \
+    OPENCLAW_HOME="${HOME_DIR}" \
+    HOME="${HOME_DIR}" \
+    NPM_CONFIG_REGISTRY="${OPENCLAW_NPM_REGISTRY}" \
+    npm_config_registry="${OPENCLAW_NPM_REGISTRY}" \
+    NPM_CONFIG_CACHE="${BUN_HOME}/.npm" \
+    npm_config_cache="${BUN_HOME}/.npm" \
+    node "${stage_script}" \
+        || {
+            toast_err "OpenClaw 安装成功，但 bundled plugin postinstall 失败"
+            log_msg "Bundled plugin postinstall failed"
+            exit 1
+        }
+
+    log_msg "Bundled plugin postinstall completed successfully."
+}
+
+write_system_openclaw_wrapper() {
+    local managed_bin="${INSTALL_DIR}/node_modules/.bin/openclaw"
+    local package_entry="${INSTALL_DIR}/node_modules/openclaw/openclaw.mjs"
+
+    mkdir -p "${HOME_BIN_DIR}"
+
+    if [ -x "${managed_bin}" ]; then
+        :
+    elif [ -f "${package_entry}" ]; then
+        managed_bin="${package_entry}"
+    else
+        log_msg "openclaw executable not found after install"
+        toast_err "OpenClaw 安装成功，但 CLI 入口生成失败"
+        exit 1
+    fi
+
+    mkdir -p "${TRIM_APPDEST}/bin"
+    cat > "${SYSTEM_OPENCLAW_WRAPPER}" <<EOF
+#!/bin/bash
+set -e
+
+export PATH="/var/apps/bunjs/target/bin:/var/apps/nodejs_v24/target/bin:${INSTALL_DIR}/node_modules/.bin:\$PATH"
+export OPENCLAW_DATA_DIR="${OPENCLAW_DATA_DIR}"
+export HOME="${HOME_DIR}"
+export OPENCLAW_CONFIG_PATH="${HOME_DIR}/.openclaw/openclaw.json"
+export OPENCLAW_HIDE_BANNER="1"
+
+exec "${managed_bin}" "\$@"
+EOF
+
+    chmod +x "${SYSTEM_OPENCLAW_WRAPPER}"
+    chmod 770 "${SYSTEM_OPENCLAW_WRAPPER}"
+    log_msg "Prepared system openclaw wrapper at ${SYSTEM_OPENCLAW_WRAPPER}"
+}
+
+seed_models_catalog_snapshot() {
+    local snapshot_src="${BOOTSTRAP_DIR}/models-catalog.snapshot.json"
+    local meta_src="${BOOTSTRAP_DIR}/models-catalog.snapshot.meta.json"
+    local snapshot_dst="${STATE_DIR}/models-catalog.snapshot.json"
+    local meta_dst="${STATE_DIR}/models-catalog.snapshot.meta.json"
+
+    mkdir -p "${STATE_DIR}"
+
+    if [ ! -f "${snapshot_src}" ]; then
+        return 0
+    fi
+
+    if should_seed_models_catalog_snapshot "${meta_src}" "${snapshot_dst}" "${meta_dst}"; then
+        cp "${snapshot_src}" "${snapshot_dst}"
+        log_msg "Seeded models catalog snapshot to ${snapshot_dst}"
+        if [ -f "${meta_src}" ]; then
+            cp "${meta_src}" "${meta_dst}"
+            log_msg "Seeded models catalog meta to ${meta_dst}"
+        fi
+    else
+        log_msg "Kept existing models catalog snapshot at ${snapshot_dst}"
+    fi
+}
+
+models_catalog_meta_fetched_at() {
+    local meta_path="$1"
+
+    if [ ! -f "${meta_path}" ]; then
+        printf '%s\n' 0
+        return 0
+    fi
+
+    awk -F: '
+        /"fetchedAt"/ {
+            value = $2
+            gsub(/[^0-9]/, "", value)
+            print (value == "" ? 0 : value)
+            found = 1
+            exit
+        }
+        END {
+            if (!found) {
+                print 0
+            }
+        }
+    ' "${meta_path}" 2>/dev/null || printf '%s\n' 0
+}
+
+should_seed_models_catalog_snapshot() {
+    local meta_src="$1"
+    local snapshot_dst="$2"
+    local meta_dst="$3"
+
+    if [ ! -f "${snapshot_dst}" ]; then
+        return 0
+    fi
+
+    local src_fetched_at
+    local dst_fetched_at
+    src_fetched_at="$(models_catalog_meta_fetched_at "${meta_src}")"
+    dst_fetched_at="$(models_catalog_meta_fetched_at "${meta_dst}")"
+
+    [ "${src_fetched_at}" -gt 0 ] && [ "${src_fetched_at}" -gt "${dst_fetched_at}" ]
+}
+
+# ---------------------------------------------------------------------------
+# 1. Create all directories the monitor expects
+# ---------------------------------------------------------------------------
+log_msg "Creating instance directories under ${OPENCLAW_DATA_DIR} ..."
+mkdir -p \
+    "${INSTALL_DIR}" \
+    "${HOME_DIR}/.openclaw" \
+    "${RUNTIME_DIR}" \
+    "${STATE_DIR}" \
+    "${WORKSPACE_DIR}" \
+    "${MONITOR_DIR}" \
+    "${BUN_HOME}"
+
+# ---------------------------------------------------------------------------
+# 2. Install openclaw via bun
+# ---------------------------------------------------------------------------
+log_msg "Installing ${OPENCLAW_PACKAGE_SPEC} to ${INSTALL_DIR} ..."
+
+if ! command -v bun >/dev/null 2>&1; then
+    toast_err "Bun 未安装，无法预装 OpenClaw"
+    log_msg "bun command not found in PATH"
+    exit 1
+fi
+
+export HOME="${BUN_HOME}"
+export BUN_INSTALL_CACHE_DIR="${BUN_HOME}/.cache"
+export SHARP_IGNORE_GLOBAL_LIBVIPS=1
+export NPM_CONFIG_REGISTRY="${OPENCLAW_NPM_REGISTRY}"
+export npm_config_registry="${OPENCLAW_NPM_REGISTRY}"
+export NPM_CONFIG_CACHE="${BUN_HOME}/.npm"
+export npm_config_cache="${BUN_HOME}/.npm"
+
+PATCHED_BAILEYS_TARBALL=""
+PATCHED_LIBSIGNAL_TARBALL=""
+write_managed_package_json
+
+log_msg "Using package registry ${OPENCLAW_NPM_REGISTRY}"
+log_msg "Pinned OpenClaw package ${OPENCLAW_PACKAGE_SPEC}"
+bun add \
+    --cwd "${INSTALL_DIR}" \
+    --registry "${OPENCLAW_NPM_REGISTRY}" \
+    "${OPENCLAW_PACKAGE_SPEC}" \
+    || { toast_err "OpenClaw 安装失败"; log_msg "bun add failed"; exit 1; }
+
+log_msg "bun add completed."
+run_bundled_plugin_postinstall
+write_system_openclaw_wrapper
+
+# ---------------------------------------------------------------------------
+# 3. Seed bundled bootstrap snapshots
+# ---------------------------------------------------------------------------
+seed_models_catalog_snapshot
+
+# ---------------------------------------------------------------------------
+# 4. Deploy custom SOUL.md (OpenClaw reads the workspace copy)
+# ---------------------------------------------------------------------------
+if [[ -f "$SOUL_MD_SRC" && ! -f "${WORKSPACE_DIR}/SOUL.md" ]]; then
+    cp "$SOUL_MD_SRC" "${WORKSPACE_DIR}/SOUL.md"
+    log_msg "Deployed SOUL.md to ${WORKSPACE_DIR}/SOUL.md"
+
+    if cp "$SOUL_MD_SRC" "${HOME_DIR}/.openclaw/SOUL.md"; then
+        log_msg "Mirrored SOUL.md to ${HOME_DIR}/.openclaw/SOUL.md"
+    else
+        log_msg "Failed to mirror SOUL.md to ${HOME_DIR}/.openclaw/SOUL.md"
+    fi
+fi
+
+# ---------------------------------------------------------------------------
+# 5. Fix permissions
+# ---------------------------------------------------------------------------
+if [ -n "${TRIM_USERNAME}" ]; then
+    log_msg "Fixing permissions for ${TRIM_USERNAME} ..."
+    # chown -R "${TRIM_USERNAME}:${TRIM_USERNAME}" "${OPENCLAW_DATA_DIR}"
+    if ! chown -R "${TRIM_USERNAME}:${TRIM_USERNAME}" "${OPENCLAW_DATA_DIR}"; then
+        log_msg "Failed to chown ${OPENCLAW_DATA_DIR} for ${TRIM_USERNAME}; continuing."
+    fi
+    chown "${TRIM_USERNAME}:${TRIM_USERNAME}" "${SYSTEM_OPENCLAW_WRAPPER}" 2>/dev/null || true
+    # chmod -R 750 "${OPENCLAW_DATA_DIR}"
+    if ! chmod -R 750 "${OPENCLAW_DATA_DIR}"; then
+        log_msg "Failed to chmod ${OPENCLAW_DATA_DIR}; continuing."
+    fi
+fi
+
+log_msg "install_callback finished successfully."
+exit 0

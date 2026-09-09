@@ -1,0 +1,29 @@
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
+
+# Node/Bun
+node_modules/
+package-lock.json
+bun.lock
+bun.lockb
+.npm/
+
+# Build artifacts
+*.tgz
+*.fpk
+*.orig
+
+# Logs
+*.log
+
+# Runtime
+/openclaw-*.log
+/gateway.log

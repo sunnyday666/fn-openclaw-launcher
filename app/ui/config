@@ -1,0 +1,18 @@
+{
+    ".url": {
+        "openclaw.launcher.Application": {
+            "title": "OpenClaw 启动器",
+            "icon": "images/icon.PNG",
+            "type": "iframe",
+            "protocol": "http",
+            "port": "",
+            "url": "/app/openclaw-launcher",
+            "allUsers": false,
+            "gatewaySocket": "openclaw.launcher.sock",
+            "gatewayPrefix": "/app/openclaw-launcher",
+            "control": {
+                "accessPerm": "readonly"
+            }
+        }
+    }
+}
