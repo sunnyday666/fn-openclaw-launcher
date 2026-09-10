@@ -41,6 +41,9 @@ fnpack build -d .          # 输出 openclaw.node.fpk
 > **注意**：本包会覆盖系统 `nodejs_v24` 应用中的 Node 运行时。若之后在应用中心升级
 > `nodejs_v24`，覆盖会被还原，需要重新安装本包。
 
+安装日志：`/var/log/apps/openclaw.node.log`（与飞牛其他应用一致，由应用中心以 root 身份
+执行 `cmd/install_callback` 并收集其输出）。
+
 ## 卸载行为
 
 - 仅当 `nodejs_v24` 当前版本仍是本包装上的 `v24.21.0` 时才还原原版备份
