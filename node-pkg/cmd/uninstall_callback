@@ -1,0 +1,69 @@
+#!/bin/bash
+
+### This script is called after the user uninstalls the application.
+###
+### 还原 nodejs_v24 的原版 Node 运行时（仅当当前仍为本包装上的版本），
+### 并移除本包补齐的 libatomic.so.1（仅当是本包装的）。
+
+log_msg() {
+    echo "$(date '+%Y-%m-%d %H:%M:%S') - $1"
+}
+
+TARGET_NODE_VERSION="v24.21.0"
+
+# 便于本地干跑测试，生产环境无需设置
+NODEJS_APP="${OPENCLAW_NODE_NODEJS_APP:-/var/apps/nodejs_v24}"
+ATOMIC_DIRS="${OPENCLAW_NODE_ATOMIC_DIRS:-/usr/lib/x86_64-linux-gnu /usr/local/lib/x86_64-linux-gnu}"
+
+STATE_DIR="${TRIM_PKGHOME:-/var/apps/openclaw.node/home}"
+BACKUP_TAR="${STATE_DIR}/backup/nodejs_v24-orig.tar.gz"
+ATOMIC_MARKER="${STATE_DIR}/libatomic.installed-by-openclaw-node"
+
+NODEJS_TARGET="$(readlink -f "${NODEJS_APP}/target" 2>/dev/null || true)"
+[ -n "${NODEJS_TARGET}" ] || NODEJS_TARGET="${NODEJS_APP}/target"
+
+CURRENT="$( "${NODEJS_TARGET}/bin/node" --version 2>/dev/null || true )"
+RESTORED="no"
+
+if [ "${CURRENT}" != "${TARGET_NODE_VERSION}" ]; then
+    log_msg "当前 nodejs_v24 版本为 ${CURRENT:-未知}，不是本包装上的版本，不做还原。"
+elif [ ! -f "${BACKUP_TAR}" ]; then
+    log_msg "未找到原版备份，nodejs_v24 将保持 ${CURRENT}。"
+    log_msg "如需还原，请在应用中心重新安装 Node.js v24，或重新安装本包以生成备份。"
+else
+    log_msg "还原 nodejs_v24 原版运行时（备份：${BACKUP_TAR}）..."
+    RESTORE_TMP="$(mktemp -d)"
+    if tar -xzf "${BACKUP_TAR}" -C "${RESTORE_TMP}" 2>/dev/null &&
+       [ -x "${RESTORE_TMP}/bin/node" ] &&
+       "${RESTORE_TMP}/bin/node" --version >/dev/null 2>&1; then
+        # 备份已校验可用，整体替换（先清空再拷贝，避免残留新版文件）
+        for entry in "${NODEJS_TARGET}"/*; do
+            [ -e "${entry}" ] || continue
+            rm -rf "${entry}"
+        done
+        cp -a "${RESTORE_TMP}"/. "${NODEJS_TARGET}/"
+        RESTORED="yes"
+        log_msg "已还原，当前版本：$( "${NODEJS_TARGET}/bin/node" --version 2>/dev/null || echo '未知' )"
+    else
+        log_msg "警告：备份不可用，nodejs_v24 将保持 ${CURRENT}，未做任何改动。"
+    fi
+    rm -rf "${RESTORE_TMP}"
+fi
+
+# 只有在已还原原版（不需要 libatomic）时才移除本包安装的库
+if [ "${RESTORED}" = "yes" ] && [ -f "${ATOMIC_MARKER}" ]; then
+    for dir in ${ATOMIC_DIRS}; do
+        rm -f "${dir}/libatomic.so.1" "${dir}/libatomic.so.1.2.0" 2>/dev/null || true
+    done
+    ldconfig 2>/dev/null || true
+    rm -f "${ATOMIC_MARKER}"
+    log_msg "已移除本包安装的 libatomic.so.1"
+elif [ -f "${ATOMIC_MARKER}" ]; then
+    log_msg "保留 libatomic.so.1（nodejs_v24 仍在使用官方 Node 二进制，需要它）"
+fi
+
+if [ "${wizard_delete_data}" = "true" ]; then
+    rm -rf "${STATE_DIR}"
+fi
+
+exit 0

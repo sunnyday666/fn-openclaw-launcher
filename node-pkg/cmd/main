@@ -1,0 +1,21 @@
+#!/bin/bash
+
+### 本包是一次性安装包，不常驻服务。
+
+case $1 in
+start)
+    exit 0
+    ;;
+stop)
+    exit 0
+    ;;
+status)
+    exit 3
+    ;;
+log)
+    exit 0
+    ;;
+*)
+    exit 1
+    ;;
+esac

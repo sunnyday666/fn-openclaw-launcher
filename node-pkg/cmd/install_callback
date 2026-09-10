@@ -1,0 +1,160 @@
+#!/bin/bash
+
+### This script is called after the user installs the application.
+###
+### 把官方 Node.js v24.21.0 (linux-x64) 安装到系统 nodejs_v24 应用目录，
+### 供 OpenClaw 启动器使用（openclaw@2026.9.3 要求 node >=24.16.0 <25，
+### 而飞牛自带的 nodejs_v24 是 24.15.0）。
+###
+### 官方 Node 二进制硬依赖 libatomic.so.1，而 fnOS 精简系统缺少该库，
+### 因此本包会一并把这个库装上，否则官方 Node 根本无法启动。
+
+set -e
+
+TARGET_NODE_VERSION="v24.21.0"
+DIST_NAME="node-${TARGET_NODE_VERSION}-linux-x64"
+
+# 便于本地干跑测试，生产环境无需设置
+NODEJS_APP="${OPENCLAW_NODE_NODEJS_APP:-/var/apps/nodejs_v24}"
+ATOMIC_DIRS="${OPENCLAW_NODE_ATOMIC_DIRS:-/usr/lib/x86_64-linux-gnu /usr/local/lib/x86_64-linux-gnu}"
+
+log_msg() {
+    echo "$(date '+%Y-%m-%d %H:%M:%S') - $1"
+}
+
+toast_err() {
+    echo "$*" > "$TRIM_TEMP_LOGFILE"
+}
+
+fail() {
+    log_msg "ERROR: $1"
+    toast_err "$1"
+    exit 1
+}
+
+log_msg "=================================================="
+log_msg "openclaw.node 安装开始：Node.js ${TARGET_NODE_VERSION}"
+log_msg "=================================================="
+
+if [ "${OPENCLAW_NODE_SKIP_ROOT_CHECK}" != "1" ] && [ "$(id -u)" != "0" ]; then
+    fail "安装脚本需要 root 权限（当前 uid=$(id -u)）"
+fi
+
+VENDOR_DIR="${TRIM_APPDEST}/vendor"
+STATE_DIR="${TRIM_PKGHOME:-/var/apps/openclaw.node/home}"
+mkdir -p "${STATE_DIR}"
+
+# ---------------------------------------------------------------------------
+# 1. 定位系统 nodejs_v24 的真实安装目录（target 是指向 @appcenter 的软链接）
+# ---------------------------------------------------------------------------
+[ -d "${NODEJS_APP}" ] || fail "未检测到 nodejs_v24 应用，请先在应用中心安装 Node.js v24"
+
+NODEJS_TARGET="$(readlink -f "${NODEJS_APP}/target" 2>/dev/null || true)"
+[ -n "${NODEJS_TARGET}" ] || NODEJS_TARGET="${NODEJS_APP}/target"
+[ -d "${NODEJS_TARGET}" ] || fail "无法定位 nodejs_v24 安装目录：${NODEJS_TARGET}"
+
+log_msg "nodejs_v24 安装目录：${NODEJS_TARGET}"
+CURRENT_NODE_VERSION="$( "${NODEJS_TARGET}/bin/node" --version 2>/dev/null || true )"
+log_msg "当前 Node 版本：${CURRENT_NODE_VERSION:-无法执行}"
+
+# ---------------------------------------------------------------------------
+# 2. 补齐 libatomic.so.1
+#    优先按 Debian 官方位置放，并执行 ldconfig；失败则退回 /usr/local/lib。
+# ---------------------------------------------------------------------------
+ATOMIC_MARKER="${STATE_DIR}/libatomic.installed-by-openclaw-node"
+
+if ldconfig -p 2>/dev/null | grep -q 'libatomic\.so\.1'; then
+    log_msg "libatomic.so.1 已存在，跳过"
+else
+    [ -f "${VENDOR_DIR}/libatomic.so.1.2.0" ] || fail "安装包内缺少 libatomic.so.1.2.0"
+
+    ATOMIC_INSTALLED=""
+    for dir in ${ATOMIC_DIRS}; do
+        mkdir -p "${dir}" 2>/dev/null || continue
+        if install -m 0644 "${VENDOR_DIR}/libatomic.so.1.2.0" "${dir}/libatomic.so.1.2.0" 2>/dev/null &&
+           ln -sf libatomic.so.1.2.0 "${dir}/libatomic.so.1" 2>/dev/null; then
+            ATOMIC_INSTALLED="${dir}"
+            break
+        fi
+    done
+
+    [ -n "${ATOMIC_INSTALLED}" ] || fail "无法安装 libatomic.so.1，官方 Node 依赖该库，安装中止"
+
+    ldconfig 2>/dev/null || true
+    if ! ldconfig -p 2>/dev/null | grep -q 'libatomic\.so\.1'; then
+        # 未进缓存也不一定是坏事（multiarch 目录是 ld.so 内置搜索路径），
+        # 真正的判据是下一步能否跑起来，这里仅记录。
+        log_msg "警告：libatomic.so.1 未出现在 ldconfig 缓存中，将由随后的运行校验判定"
+    fi
+
+    : > "${ATOMIC_MARKER}"
+    log_msg "已安装 libatomic.so.1 -> ${ATOMIC_INSTALLED}"
+fi
+
+# ---------------------------------------------------------------------------
+# 3. 备份原版 nodejs_v24（供卸载时还原）
+#    备份文件名带原版本号；若当前内容不是本包的版本，就重新备份，
+#    避免 nodejs_v24 被应用中心升级后，卸载时反而还原成更旧的版本。
+# ---------------------------------------------------------------------------
+BACKUP_DIR="${STATE_DIR}/backup"
+BACKUP_TAR="${BACKUP_DIR}/nodejs_v24-orig.tar.gz"
+BACKUP_VER_FILE="${BACKUP_TAR}.version"
+
+if [ -f "${BACKUP_TAR}" ] && [ "${CURRENT_NODE_VERSION}" = "${TARGET_NODE_VERSION}" ]; then
+    log_msg "已是本包版本，保留原有备份：$(cat "${BACKUP_VER_FILE}" 2>/dev/null || echo '未知版本')"
+elif [ -f "${BACKUP_TAR}" ] && [ "${CURRENT_NODE_VERSION}" = "$(cat "${BACKUP_VER_FILE}" 2>/dev/null || true)" ]; then
+    log_msg "已存在与当前版本一致的备份，跳过：${BACKUP_TAR}"
+else
+    mkdir -p "${BACKUP_DIR}"
+    log_msg "备份原版 nodejs_v24 (${CURRENT_NODE_VERSION:-未知}) 到 ${BACKUP_TAR} ..."
+    if tar -czf "${BACKUP_TAR}.tmp" -C "${NODEJS_TARGET}" . 2>/dev/null; then
+        mv -f "${BACKUP_TAR}.tmp" "${BACKUP_TAR}"
+        printf '%s\n' "${CURRENT_NODE_VERSION}" > "${BACKUP_VER_FILE}"
+        log_msg "备份完成：$(du -h "${BACKUP_TAR}" | cut -f1)"
+    else
+        rm -f "${BACKUP_TAR}.tmp" 2>/dev/null || true
+        log_msg "警告：备份失败，仍继续安装（卸载时将无法自动还原原版）"
+    fi
+fi
+
+# ---------------------------------------------------------------------------
+# 4. 解包并覆盖 Node 运行时
+# ---------------------------------------------------------------------------
+TARBALL="${VENDOR_DIR}/${DIST_NAME}.tar.xz"
+[ -f "${TARBALL}" ] || fail "安装包内缺少 ${DIST_NAME}.tar.xz"
+
+TMP_DIR="$(mktemp -d)"
+trap 'rm -rf "${TMP_DIR}"' EXIT
+
+log_msg "解包 ${DIST_NAME}.tar.xz ..."
+tar -xf "${TARBALL}" -C "${TMP_DIR}"
+SRC_DIR="${TMP_DIR}/${DIST_NAME}"
+[ -d "${SRC_DIR}/bin" ] || fail "解包结果异常，未找到 ${SRC_DIR}/bin"
+
+log_msg "覆盖到 ${NODEJS_TARGET} ..."
+for entry in "${SRC_DIR}"/*; do
+    [ -e "${entry}" ] || continue
+    base="$(basename "${entry}")"
+    rm -rf "${NODEJS_TARGET:?}/${base}"
+    cp -a "${entry}" "${NODEJS_TARGET}/${base}"
+done
+
+# ---------------------------------------------------------------------------
+# 5. 运行校验：能跑出目标版本号才算成功（同时验证 libatomic 生效）
+# ---------------------------------------------------------------------------
+ACTUAL="$( "${NODEJS_TARGET}/bin/node" --version 2>/dev/null || true )"
+if [ "${ACTUAL}" != "${TARGET_NODE_VERSION}" ]; then
+    fail "安装校验失败：期望 ${TARGET_NODE_VERSION}，实际 '${ACTUAL:-无法执行}'。若报 libatomic.so.1 缺失，请执行 ldconfig 后重试。"
+fi
+
+NPM_VERSION="$( "${NODEJS_TARGET}/bin/node" "${NODEJS_TARGET}/bin/npm" --version 2>/dev/null || echo '不可用' )"
+log_msg "✅ Node ${ACTUAL} 安装成功（npm ${NPM_VERSION}）"
+
+printf '%s\n' "${TARGET_NODE_VERSION}" > "${STATE_DIR}/installed-node-version"
+
+log_msg "OpenClaw 启动器下次启动网关 / 更新 OpenClaw 时会使用该版本。"
+log_msg "=================================================="
+log_msg "openclaw.node 安装完成"
+log_msg "=================================================="
+
+exit 0

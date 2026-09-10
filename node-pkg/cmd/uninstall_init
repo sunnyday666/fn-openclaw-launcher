@@ -1,0 +1,6 @@
+#!/bin/bash
+
+### This script is called before the user uninstalls the application.
+### 本包不常驻任何服务，无需停止进程。
+
+exit 0

@@ -1,0 +1,15 @@
+appname               = openclaw.node
+version               = 1.0.0
+install_dep_apps      = nodejs_v24
+display_name          = Node.js v24.21.0 安装包
+desc                  = 为 OpenClaw 启动器准备的 Node.js 运行时升级包。<br/><br/>官方 <b>openclaw@2026.9.3</b> 要求 Node <b>&gt;=24.16.0 &lt;25</b>，而飞牛应用中心的 nodejs_v24 自带 24.15.0，导致启动器只能安装偏旧的 OpenClaw 版本。本包把官方 Node.js <b>v24.21.0 LTS</b> 安装进系统 nodejs_v24 应用目录，供启动器使用。<br/><br/><b>关于 libatomic：</b>官方 Node 二进制硬依赖 <b>libatomic.so.1</b>，而 fnOS 精简系统缺少该库（飞牛自带的 Node 是自行编译的，不需要它），直接使用官方二进制会报 <i>error while loading shared libraries: libatomic.so.1</i>。本包已内置该库并在安装时补齐。<br/><br/><b>注意：</b>本包会<b>覆盖</b>系统 nodejs_v24 应用中的 Node 运行时（安装时会自动备份原版，卸载时还原）。若之后在应用中心升级 nodejs_v24，覆盖会被还原，需要重新安装本包。
+arch                  = x86_64
+source                = official
+maintainer            = 晴川
+distributor           = 晴川
+ctl_stop              = false
+checkport             = false
+disable_authorization_path = true
+os_min_version        = 1.1.3107
+changelog             = v1.0.0：首个版本。内置官方 Node.js v24.21.0 (linux-x64) 与 libatomic.so.1，安装时覆盖系统 nodejs_v24 运行时并自动备份原版，卸载时还原。
+platform              = 

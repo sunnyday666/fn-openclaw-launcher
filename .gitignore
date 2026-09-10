@@ -21,6 +21,9 @@ bun.lockb
 *.fpk
 *.orig
 
+# node-pkg 的 Node 运行时（约 32MB，由 node-pkg/fetch-vendor.sh 下载）
+node-pkg/app/vendor/*.tar.xz
+
 # Logs
 *.log
 

@@ -1,0 +1,7 @@
+#!/bin/bash
+
+### This script is called after the user upgrades the application.
+### 升级等价于重新执行安装逻辑（脚本本身幂等）。
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+exec "${SCRIPT_DIR}/install_callback"
