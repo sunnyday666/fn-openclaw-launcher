@@ -17,6 +17,38 @@
   <body>
     <script>
       document.body.setAttribute("theme-mode", window.localStorage.getItem("fnos-theme-mode") || "");
+      (function(){
+        var BASE='/app/openclaw-launcher';
+        function getNodeInfo(){
+          return fetch(BASE+'/api/node-info').then(function(r){return r.json()}).catch(function(){return{nodeVersion:'unknown',openclawVersion:'unknown'}});
+        }
+        function inject(){
+          if(document.getElementById('_node-info-bar'))return;
+          getNodeInfo().then(function(info){
+            var nodeV=info.nodeVersion||'unknown';
+            var ocV=info.openclawVersion||'latest';
+            var match=nodeV.match(/v?(\d+)\.(\d+)/);
+            var minor=match?parseInt(match[2]):0;
+            var patch=match?parseInt(match[3]):0;
+            var needUpdate=(minor<24||(minor===24&&patch<16));
+            var bar=document.createElement('div');
+            bar.id='_node-info-bar';
+            bar.style.cssText='position:fixed;bottom:0;left:0;right:0;z-index:9999;display:flex;align-items:center;gap:16px;padding:8px 16px;font-size:13px;font-family:system-ui,-apple-system,sans-serif;border-top:1px solid var(--semi-color-border);background:var(--semi-color-bg-1);';
+            var infoHtml='<span style="color:var(--semi-color-text-2)">Node</span> <strong style="color:'+(needUpdate?'#d46b08':'var(--semi-color-text-0)')+'">'+nodeV+'</strong>';
+            infoHtml+=' <span style="color:var(--semi-color-text-2);margin-left:8px">OpenClaw</span> <strong style="color:var(--semi-color-text-0)">'+ocV+'</strong>';
+            if(needUpdate){
+              infoHtml+=' <span style="color:#d46b08;margin-left:8px">⚠️ Node ≥24.16 才支持 DeepSeek Provider</span>';
+              infoHtml+=' <a href="javascript:void(0)" style="color:#1677ff;text-decoration:underline;cursor:pointer" onclick="(async function(){if(!confirm(\'将下载 Node 24.16.0 替换当前版本，OpenClaw 会短暂重启，确定？\'))return;var el=document.getElementById(\'_node-tip\');el.textContent=\'⏳ 下载中...\';el.style.display=\'inline\';try{var r=await fetch(\''+BASE+'/api/node-update\',{method:\'POST\'});var d=await r.json();if(d.ok){el.textContent=\'✅ 已更新为 \'+d.newVersion+\',3秒后重启...\';setTimeout(function(){location.reload()},3000)}else{el.textContent=\'❌ \'+(d.error||\'失败\');el.style.color=\'#cf1322\'}}catch(e){el.textContent=\'❌ 网络错误\';el.style.color=\'#cf1322\'}})()">更新 Node</a>';
+              infoHtml+=' <span id="_node-tip" style="display:none"></span>';
+            }
+            bar.innerHTML=infoHtml;
+            document.body.appendChild(bar);
+          });
+        }
+        var obs=new MutationObserver(function(){inject()});
+        obs.observe(document.getElementById('app'),{childList:true,subtree:true});
+        setTimeout(inject,3000);
+      })();
     </script>
     <div id="app"></div>
     <div
@@ -32,126 +64,5 @@
         </svg>
       </div>
     </div>
-    <script>
-      (function () {
-        var BASE = '/app/openclaw-launcher';
-        var s = document.querySelector('script[src*="/assets/"]');
-        if (s) BASE = s.getAttribute('src').replace(/\/assets\/.*$/, '') || BASE;
-
-        function api(path, opt) {
-          return fetch(BASE + path, opt).then(function (r) { return r.json(); });
-        }
-
-        function findButtonRow() {
-          var startBtn = null;
-          var btns = document.querySelectorAll('button');
-          for (var i = 0; i < btns.length; i++) {
-            if (btns[i].textContent.trim() === '启动') { startBtn = btns[i]; break; }
-          }
-          if (!startBtn) return null;
-          var row = startBtn.parentElement;
-          while (row && row !== document.body) {
-            var t = row.textContent || '';
-            if (t.indexOf('重启') >= 0 && t.indexOf('检查更新') >= 0) return row;
-            row = row.parentElement;
-          }
-          return null;
-        }
-
-        function inject() {
-          if (document.getElementById('_nodeWrap')) return true;
-          var row = findButtonRow();
-          if (!row || !row.parentElement) return false;
-
-          var wrap = document.createElement('div');
-          wrap.id = '_nodeWrap';
-          wrap.style.cssText = 'margin-top:16px;padding-top:16px;border-top:1px solid var(--semi-color-border);display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:13px;font-family:system-ui,-apple-system,sans-serif;';
-          wrap.innerHTML =
-            '<span style="color:var(--semi-color-text-2)">Node 版本</span>' +
-            '<select id="_nodeSel" style="padding:4px 10px;border-radius:6px;border:1px solid var(--semi-color-border);background:var(--semi-color-bg-1);color:var(--semi-color-text-0);font-size:13px;font-weight:600;cursor:pointer;"></select>' +
-            '<button id="_nodeLoad" style="padding:4px 12px;border-radius:6px;border:1px solid var(--semi-color-border);background:transparent;color:var(--semi-color-text-0);font-size:13px;cursor:pointer;">加载版本列表</button>' +
-            '<button id="_nodeInstall" style="padding:4px 12px;border-radius:6px;border:1px solid var(--semi-color-primary);background:var(--semi-color-primary);color:#fff;font-size:13px;cursor:pointer;">安装所选版本</button>' +
-            '<span style="color:var(--semi-color-text-2)">OpenClaw</span>' +
-            '<strong id="_ocVer" style="color:var(--semi-color-text-0)">—</strong>' +
-            '<span id="_nodeTip" style="color:var(--semi-color-text-2)"></span>';
-
-          row.parentElement.insertBefore(wrap, row.nextSibling);
-
-          var sel = document.getElementById('_nodeSel');
-          var tip = document.getElementById('_nodeTip');
-
-          api('/api/node-info').then(function (info) {
-            var nodeV = info.nodeVersion || 'v?';
-            var ocV = info.openclawVersion || 'latest';
-            var src = info.nodeSource === 'local' ? '应用自带' : '系统';
-            var mm = nodeV.match(/v?(\d+)\.(\d+)/);
-            var needUpdate = !(mm && parseInt(mm[1], 10) >= 24 && parseInt(mm[2], 10) >= 16);
-            sel.innerHTML = '<option value="' + nodeV + '">' + nodeV + ' · ' + src + '</option>';
-            document.getElementById('_ocVer').textContent = ocV;
-            if (needUpdate) {
-              sel.style.color = '#d46b08';
-              tip.style.color = '#d46b08';
-              tip.textContent = '⚠️ 当前 ' + nodeV + '（' + src + '），装到 ≥24.16 才支持 DeepSeek Provider';
-            } else {
-              tip.style.color = '#389e0d';
-              tip.textContent = '✅ 版本满足要求';
-            }
-          }).catch(function () {});
-
-          document.getElementById('_nodeLoad').onclick = function () {
-            tip.style.color = 'var(--semi-color-text-2)';
-            tip.textContent = '⏳ 正在加载版本列表...';
-            api('/api/node-versions').then(function (d) {
-              var vs = (d && d.versions) || [];
-              if (!vs.length) { tip.textContent = '❌ 没有取到可用版本'; return; }
-              sel.innerHTML = vs.map(function (v) {
-                return '<option value="' + v.version + '">' + v.version + (v.lts ? ' (LTS)' : '') + '</option>';
-              }).join('');
-              sel.value = vs[0].version;
-              tip.textContent = '已加载 ' + vs.length + ' 个版本，选择后点「安装所选版本」';
-            }).catch(function () { tip.textContent = '❌ 加载失败，请检查网络'; });
-          };
-
-          document.getElementById('_nodeInstall').onclick = function () {
-            var v = sel.value || '';
-            if (v.charAt(0) !== 'v') { tip.textContent = '请先点「加载版本列表」再选择版本'; return; }
-            if (!confirm('将安装 Node ' + v + ' 并替换当前版本，OpenClaw 会短暂重启，确定继续？')) return;
-            tip.style.color = 'var(--semi-color-text-2)';
-            tip.textContent = '⏳ 正在下载安装 ' + v + '，请稍候（约 30MB）...';
-            api('/api/node-update', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ version: v })
-            }).then(function (d) {
-              if (d && d.ok) {
-                tip.style.color = '#389e0d';
-                tip.textContent = '✅ 已安装 ' + d.newVersion + '，3 秒后刷新页面...';
-                setTimeout(function () { location.reload(); }, 3000);
-              } else {
-                tip.style.color = '#cf1322';
-                tip.textContent = '❌ ' + ((d && d.error) || '安装失败');
-              }
-            }).catch(function () {
-              tip.style.color = '#cf1322';
-              tip.textContent = '❌ 网络错误，请稍后重试';
-            });
-          };
-
-          return true;
-        }
-
-        // #app 之后的脚本：#app 已存在，observer 目标必定有效
-        var root = document.getElementById('app') || document.body;
-        try {
-          new MutationObserver(function () { inject(); }).observe(root, { childList: true, subtree: true });
-        } catch (e) { /* 忽略：下面的轮询仍会兜底 */ }
-
-        var tries = 0;
-        var timer = setInterval(function () {
-          tries += 1;
-          if (inject() || tries > 120) clearInterval(timer);
-        }, 500);
-      })();
-    </script>
   </body>
 </html>
