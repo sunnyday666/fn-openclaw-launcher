@@ -10980,23 +10980,8 @@ var BUILTIN_PROVIDER_PRESETS = {
     baseUrl: "https://api.z.ai/api/paas/v4",
     api: "openai-completions"
   },
-  xiaomi: {
-    baseUrl: "https://api.xiaomimimo.com/v1",
-    api: "openai-completions"
-  },
-  "xiaomi-token-plan-cn": {
-    baseUrl: "https://token-plan-cn.xiaomimimo.com/v1",
-    api: "openai-completions"
-  },
-  "xiaomi-token-plan-sgp": {
-    baseUrl: "https://token-plan-sgp.xiaomimimo.com/v1",
-    api: "openai-completions"
-  },
-  "xiaomi-token-plan-ams": {
-    baseUrl: "https://token-plan-ams.xiaomimimo.com/v1",
-    api: "openai-completions"
-  }
 };
+
 var PROVIDER_LABELS = {
   "bailian-coding": "Bailian Coding",
   bailian: "Bailian",
@@ -11014,11 +10999,7 @@ var PROVIDER_LABELS = {
   openrouter: "OpenRouter",
   together: "Together",
   xai: "xAI",
-  zai: "Z.AI (智谱 GLM)",
-  xiaomi: "小米 MiMo",
-  "xiaomi-token-plan-cn": "小米 MiMo Token Plan (国内)",
-  "xiaomi-token-plan-sgp": "小米 MiMo Token Plan (新加坡)",
-  "xiaomi-token-plan-ams": "小米 MiMo Token Plan (阿姆斯特丹)"
+  zai: "Z.AI (智谱 GLM)"
 };
 function humanizeProviderId(providerId) {
   return providerId.split(/[-_]/).filter(Boolean).map((segment) => {
