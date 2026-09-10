@@ -11,8 +11,8 @@
 ## 核心特性
 
 **版本管理**
-- 自动解析本机 Node 版本，从 registry 选取满足 `engines.node` 约束的最新稳定版
-- 当前环境（Node 24.15）自动选择 2026.9.2，不会因 Node 版本不满足而启动失败
+- 自动解析本机真实 Node 版本，从 registry 选取满足 `engines.node` 约束的最新稳定版
+- 系统自带 Node 24.15 下自动选择 2026.9.2；装上下方的 [Node 升级包](#node-升级包) 后可升到最新的 2026.9.3
 
 **网络适配**
 - 网关直接 TLS（`--bind lan` + 门户证书），浏览器直连 `https://NAS:端口/control`
@@ -72,7 +72,13 @@
 │   ├── openclaw-version.env      # OPENCLAW_VERSION=latest
 │   ├── privilege                 # 运行用户配置
 │   └── resource                  # 数据共享配置
-└── wizard/uninstall              # 卸载向导
+├── wizard/uninstall              # 卸载向导
+└── node-pkg/                     # 独立的 Node.js v24.21.0 安装包（可选）
+    ├── manifest                  # appname = openclaw.node
+    ├── cmd/install_callback      # 覆盖 nodejs_v24 运行时 + 补 libatomic
+    ├── cmd/uninstall_callback    # 还原原版运行时
+    ├── fetch-vendor.sh           # 拉取并校验官方 Node tarball
+    └── app/vendor/               # node tarball + libatomic.so.1.2.0
 ```
 
 ## 构建
@@ -82,6 +88,30 @@
 fnpack build -d .
 # 输出：openclaw.launcher.fpk
 ```
+
+## Node 升级包
+
+`openclaw@2026.9.3` 要求 `node >=24.16.0 <25`，而飞牛应用中心的 `nodejs_v24` 只到 **24.15.0**，
+因此启动器最多只能选到 2026.9.2。`node-pkg/` 是一个独立的飞牛应用包，把官方
+**Node.js v24.21.0 LTS** 覆盖安装到系统 `nodejs_v24` 运行时目录，并补齐官方二进制必需的
+`libatomic.so.1`（fnOS 精简系统缺失该库）。
+
+```bash
+cd node-pkg
+./fetch-vendor.sh          # 下载并校验官方 Node tarball（约 32MB，不入库）
+fnpack build -d .          # 输出 openclaw.node.fpk
+```
+
+从 [Releases](https://github.com/sunnyday666/fn-openclaw-launcher/releases) 的
+`Node.js v24.21.0 安装包` 下载安装。安装时会自动备份原版运行时，卸载时还原。
+
+## 赞赏支持
+
+如果这个项目帮到了你，欢迎扫码请我喝杯咖啡 ☕。
+
+<img src="docs/wechat-pay.png" alt="微信收款码" width="260">
+
+> 使用问题、功能建议请到 [Issues](https://github.com/sunnyday666/fn-openclaw-launcher/issues) 反馈。
 
 ## 许可证
 
