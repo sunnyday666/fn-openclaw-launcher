@@ -10980,6 +10980,22 @@ var BUILTIN_PROVIDER_PRESETS = {
     baseUrl: "https://api.z.ai/api/paas/v4",
     api: "openai-completions"
   },
+  xiaomi: {
+    baseUrl: "https://api.xiaomimimo.com/v1",
+    api: "openai-completions"
+  },
+  "xiaomi-token-plan-cn": {
+    baseUrl: "https://token-plan-cn.xiaomimimo.com/v1",
+    api: "openai-completions"
+  },
+  "xiaomi-token-plan-sgp": {
+    baseUrl: "https://token-plan-sgp.xiaomimimo.com/v1",
+    api: "openai-completions"
+  },
+  "xiaomi-token-plan-ams": {
+    baseUrl: "https://token-plan-ams.xiaomimimo.com/v1",
+    api: "openai-completions"
+  }
 };
 var PROVIDER_LABELS = {
   "bailian-coding": "Bailian Coding",
@@ -10998,7 +11014,11 @@ var PROVIDER_LABELS = {
   openrouter: "OpenRouter",
   together: "Together",
   xai: "xAI",
-  zai: "Z.AI"
+  zai: "Z.AI (智谱 GLM)",
+  xiaomi: "小米 MiMo",
+  "xiaomi-token-plan-cn": "小米 MiMo Token Plan (国内)",
+  "xiaomi-token-plan-sgp": "小米 MiMo Token Plan (新加坡)",
+  "xiaomi-token-plan-ams": "小米 MiMo Token Plan (阿姆斯特丹)"
 };
 function humanizeProviderId(providerId) {
   return providerId.split(/[-_]/).filter(Boolean).map((segment) => {
@@ -14534,31 +14554,45 @@ app10.get(`${apiBase}/node-info`, async (c3) => {
   } catch {}
   return c3.json({ nodeVersion, openclawVersion });
 });
+app10.get(`${apiBase}/node-versions`, async (c3) => {
+  try {
+    const res = await fetch("https://cdn.npmmirror.com/binaries/node/index.json");
+    const list = await res.json();
+    const versions = list
+      .filter((v) => /^v(2[4-9]|[3-9][0-9])\.\d+\.\d+$/.test(v.version))
+      .filter((v) => Array.isArray(v.files) && v.files.includes("linux-x64"))
+      .map((v) => ({ version: v.version, date: v.date, lts: v.lts || false }))
+      .slice(0, 30);
+    return c3.json({ versions });
+  } catch (err) {
+    return c3.json({ versions: [{ version: "v24.16.0", date: "", lts: false }], error: err instanceof Error ? err.message : String(err) });
+  }
+});
 app10.post(`${apiBase}/node-update`, async (c3) => {
   try {
+    let target = "";
+    try {
+      const body = await c3.req.json();
+      if (body && typeof body.version === "string") target = body.version.trim();
+    } catch {}
     const proc = Bun.spawn(["node", "--version"], { stdout: "pipe", stderr: "pipe" });
     const current = (await new Response(proc.stdout).text()).trim();
-    const match = current.match(/v?(\d+)\.(\d+)/);
-    const major = match ? parseInt(match[1]) : 0;
-    const minor = match ? parseInt(match[2]) : 0;
-    const patch = match ? parseInt(match[3]) : 0;
-    if (minor >= 24 && patch >= 16) {
-      return c3.json({ ok: true, newVersion: current, message: "已经是最新版本" });
+    if (!/^v\d+\.\d+\.\d+$/.test(target)) target = "v24.16.0";
+    if (target === current) {
+      return c3.json({ ok: true, newVersion: current, message: "已经是该版本" });
     }
-    const targetMinor = 24;
-    const targetPatch = 16;
-    const nodeUrl = `https://cdn.npmmirror.com/binaries/node/v${major}.${targetMinor}.${targetPatch}/node-v${major}.${targetMinor}.${targetPatch}-linux-x64.tar.xz`;
+    const nodeUrl = `https://cdn.npmmirror.com/binaries/node/${target}/node-${target}-linux-x64.tar.xz`;
     const dlProc = Bun.spawn(["bash", "-c", `
       set -e
       TMPDIR=$(mktemp -d)
       cd "$TMPDIR"
-      echo "Downloading Node ${major}.${targetMinor}.${targetPatch}..."
+      echo "Downloading Node ${target}..."
       curl -fsSL -o node.tar.xz "${nodeUrl}"
       echo "Extracting..."
       tar -xf node.tar.xz
-      BINDIR=$(ls -d node-v*-linux-x64/bin)
-      # Replace current node binary
-      NODE_PATH=$(which node 2>/dev/null || echo "/var/apps/nodejs_v24/target/bin/node")
+      BINDIR=$(ls -d node-${target}-linux-x64/bin)
+      NODE_PATH=$(command -v node || echo "/var/apps/nodejs_v24/target/bin/node")
+      echo "Installing to $NODE_PATH"
       cp "$BINDIR/node" "$NODE_PATH"
       chmod +x "$NODE_PATH"
       rm -rf "$TMPDIR"
@@ -14572,10 +14606,9 @@ app10.post(`${apiBase}/node-update`, async (c3) => {
     }
     const newProc = Bun.spawn(["node", "--version"], { stdout: "pipe", stderr: "pipe" });
     const newVersion = (await new Response(newProc.stdout).text()).trim();
-    // Restart openclaw to use new node
     const instance = await resolveInstance(DEFAULT_INSTANCE_ID);
     if (instance) {
-      await stopInstance(instance);
+      try { await stopInstance(instance); } catch {}
       setTimeout(() => startInstance(instance).catch(() => {}), 2000);
     }
     return c3.json({ ok: true, newVersion });
