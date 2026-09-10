@@ -2537,6 +2537,10 @@ function resolvePatchedTarball(patchesDir, manifest, artifactKey, filePrefix) {
   return tarballName ? join(patchesDir, tarballName) : null;
 }
 var DATA_ROOT = process.env.OPENCLAW_DATA_DIR || fnnasDataRoot || "/tmp/openclaw-data";
+// 应用自带的 Node 运行时(装在数据目录, 无需 root 权限; 系统 nodejs_v24 保持不变)。
+// 用于满足 OpenClaw 新版对 Node 版本的要求(如 2026.9.3 需要 Node>=24.16)。
+var LOCAL_NODE_DIR = `${DATA_ROOT}/node`;
+var LOCAL_NODE_BIN_DIR = `${LOCAL_NODE_DIR}/bin`;
 var DEFAULT_INSTANCE_ID = process.env.OPENCLAW_DEFAULT_INSTANCE_ID || "default";
 var MONITOR_BASE_PATH = configuredBasePath === "/" ? "" : `/${configuredBasePath}`.replace(/\/+/g, "/").replace(/\/$/, "");
 var MONITOR_DB_DIR = `${DATA_ROOT}/monitor`;
@@ -3354,10 +3358,16 @@ function activeConfigPath(instance) {
 }
 function openclawEnv(instance) {
   const configPath = activeConfigPath(instance);
+  // 应用自带 Node 优先(若已通过概览页安装), 满足新版 OpenClaw 的 engines.node 要求
+  const envPath = prependToPath(
+    prependToPath(process.env.PATH, LOCAL_NODE_BIN_DIR),
+    `${instance.installDir}/node_modules/.bin`
+  );
   const sharedEnv = {
     ...process.env,
     OPENCLAW_HIDE_BANNER: "1",
-    OLLAMA_API_KEY: process.env.OLLAMA_API_KEY || "ollama-local"
+    OLLAMA_API_KEY: process.env.OLLAMA_API_KEY || "ollama-local",
+    PATH: envPath
   };
   if (usesSystemOpenclaw(instance)) {
     return {
@@ -3369,9 +3379,23 @@ function openclawEnv(instance) {
   return {
     ...sharedEnv,
     HOME: instance.homeDir,
-    OPENCLAW_CONFIG_PATH: configPath,
-    PATH: prependToPath(process.env.PATH, `${instance.installDir}/node_modules/.bin`)
+    OPENCLAW_CONFIG_PATH: configPath
   };
+}
+// 当前实际生效的 Node 版本: 应用自带 Node 优先, 否则回退到运行本进程的 Node。
+async function resolveEffectiveNodeVersion() {
+  const localNode = `${LOCAL_NODE_BIN_DIR}/node`;
+  try {
+    if (await Bun.file(localNode).exists()) {
+      const proc = Bun.spawn([localNode, "--version"], { stdout: "pipe", stderr: "pipe" });
+      const out = (await new Response(proc.stdout).text()).trim();
+      await proc.exited;
+      const m = out.match(/^v?(\d+\.\d+\.\d+)/u);
+      if (m) return { version: m[1], source: "local" };
+    }
+  } catch {}
+  const ambient = (process.versions && process.versions.node) || "";
+  return { version: ambient, source: ambient ? "system" : "unknown" };
 }
 function openclawBinPath(instance) {
   if (usesSystemOpenclaw(instance)) {
@@ -11919,7 +11943,7 @@ var GATEWAY_STARTUP_FAILURE_PATTERNS = [
 // 解析「本机 Node 兼容的最新 openclaw 稳定版」: openclaw@latest 可能要求比本机更高的 Node
 // (如 2026.9.3 需 Node>=24.16, 而 fnOS nodejs_v24 常为 24.15), 直接装 latest 会导致网关无法启动。
 async function resolveCompatibleOpenclawVersion() {
-  const localNode = (process.versions && process.versions.node) || "";
+  const localNode = (await resolveEffectiveNodeVersion()).version;
   if (!localNode) {
     return null;
   }
@@ -14518,10 +14542,12 @@ app10.get(`${apiBase}/health`, (c3) => {
 });
 app10.get(`${apiBase}/node-info`, async (c3) => {
   let nodeVersion = "unknown";
+  let nodeSource = "unknown";
   let openclawVersion = OPENCLAW_VERSION;
   try {
-    const proc = Bun.spawn(["node", "--version"], { stdout: "pipe", stderr: "pipe" });
-    nodeVersion = (await new Response(proc.stdout).text()).trim();
+    const info = await resolveEffectiveNodeVersion();
+    nodeVersion = info.version ? `v${info.version}` : "unknown";
+    nodeSource = info.source;
   } catch {}
   try {
     const instance = await resolveInstance(DEFAULT_INSTANCE_ID);
@@ -14533,7 +14559,7 @@ app10.get(`${apiBase}/node-info`, async (c3) => {
       }
     }
   } catch {}
-  return c3.json({ nodeVersion, openclawVersion });
+  return c3.json({ nodeVersion, nodeSource, openclawVersion, localNodeDir: LOCAL_NODE_DIR });
 });
 app10.get(`${apiBase}/node-versions`, async (c3) => {
   try {
@@ -14549,6 +14575,7 @@ app10.get(`${apiBase}/node-versions`, async (c3) => {
     return c3.json({ versions: [{ version: "v24.16.0", date: "", lts: false }], error: err instanceof Error ? err.message : String(err) });
   }
 });
+// 安装 Node 到应用数据目录(无需 root, 不影响系统 nodejs_v24)。OpenClaw 启动时会优先使用它。
 app10.post(`${apiBase}/node-update`, async (c3) => {
   try {
     let target = "";
@@ -14556,28 +14583,30 @@ app10.post(`${apiBase}/node-update`, async (c3) => {
       const body = await c3.req.json();
       if (body && typeof body.version === "string") target = body.version.trim();
     } catch {}
-    const proc = Bun.spawn(["node", "--version"], { stdout: "pipe", stderr: "pipe" });
-    const current = (await new Response(proc.stdout).text()).trim();
     if (!/^v\d+\.\d+\.\d+$/.test(target)) target = "v24.16.0";
-    if (target === current) {
-      return c3.json({ ok: true, newVersion: current, message: "已经是该版本" });
+    const current = (await resolveEffectiveNodeVersion()).version;
+    if (current === target.slice(1)) {
+      return c3.json({ ok: true, newVersion: `v${current}`, message: "已经是该版本" });
     }
     const nodeUrl = `https://cdn.npmmirror.com/binaries/node/${target}/node-${target}-linux-x64.tar.xz`;
     const dlProc = Bun.spawn(["bash", "-c", `
       set -e
-      TMPDIR=$(mktemp -d)
-      cd "$TMPDIR"
-      echo "Downloading Node ${target}..."
-      curl -fsSL -o node.tar.xz "${nodeUrl}"
-      echo "Extracting..."
+      TMP=$(mktemp -d)
+      cd "$TMP"
+      echo "下载 Node ${target} ..."
+      curl -fsSL --retry 2 -o node.tar.xz "${nodeUrl}"
+      echo "解压 ..."
       tar -xf node.tar.xz
-      BINDIR=$(ls -d node-${target}-linux-x64/bin)
-      NODE_PATH=$(command -v node || echo "/var/apps/nodejs_v24/target/bin/node")
-      echo "Installing to $NODE_PATH"
-      cp "$BINDIR/node" "$NODE_PATH"
-      chmod +x "$NODE_PATH"
-      rm -rf "$TMPDIR"
-      echo "OK"
+      SRC="node-${target}-linux-x64"
+      test -d "$SRC"
+      DEST="${LOCAL_NODE_DIR}"
+      rm -rf "\${DEST}.new"
+      mkdir -p "\${DEST}.new"
+      cp -a "$SRC"/. "\${DEST}.new"/
+      rm -rf "$DEST"
+      mv "\${DEST}.new" "$DEST"
+      rm -rf "$TMP"
+      "\${DEST}/bin/node" --version
     `], { stdout: "pipe", stderr: "pipe", env: { ...process.env } });
     const out = await new Response(dlProc.stdout).text();
     const err = await new Response(dlProc.stderr).text();
@@ -14585,14 +14614,14 @@ app10.post(`${apiBase}/node-update`, async (c3) => {
     if (exit !== 0) {
       return c3.json({ ok: false, error: err || out || `exit code ${exit}` });
     }
-    const newProc = Bun.spawn(["node", "--version"], { stdout: "pipe", stderr: "pipe" });
-    const newVersion = (await new Response(newProc.stdout).text()).trim();
+    const newVersion = (await resolveEffectiveNodeVersion()).version;
+    // 重启 OpenClaw 以使用新 Node
     const instance = await resolveInstance(DEFAULT_INSTANCE_ID);
     if (instance) {
       try { await stopInstance(instance); } catch {}
       setTimeout(() => startInstance(instance).catch(() => {}), 2000);
     }
-    return c3.json({ ok: true, newVersion });
+    return c3.json({ ok: true, newVersion: `v${newVersion}`, installedAt: LOCAL_NODE_DIR });
   } catch (err) {
     return c3.json({ ok: false, error: err instanceof Error ? err.message : String(err) });
   }

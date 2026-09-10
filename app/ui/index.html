@@ -83,14 +83,18 @@
           api('/api/node-info').then(function (info) {
             var nodeV = info.nodeVersion || 'v?';
             var ocV = info.openclawVersion || 'latest';
+            var src = info.nodeSource === 'local' ? '应用自带' : '系统';
             var mm = nodeV.match(/v?(\d+)\.(\d+)/);
             var needUpdate = !(mm && parseInt(mm[1], 10) >= 24 && parseInt(mm[2], 10) >= 16);
-            sel.innerHTML = '<option value="' + nodeV + '">' + nodeV + '</option>';
+            sel.innerHTML = '<option value="' + nodeV + '">' + nodeV + ' · ' + src + '</option>';
             document.getElementById('_ocVer').textContent = ocV;
             if (needUpdate) {
               sel.style.color = '#d46b08';
               tip.style.color = '#d46b08';
-              tip.textContent = '⚠️ Node ≥24.16 才支持 DeepSeek Provider，请加载版本列表后安装';
+              tip.textContent = '⚠️ 当前 ' + nodeV + '（' + src + '），装到 ≥24.16 才支持 DeepSeek Provider';
+            } else {
+              tip.style.color = '#389e0d';
+              tip.textContent = '✅ 版本满足要求';
             }
           }).catch(function () {});
 

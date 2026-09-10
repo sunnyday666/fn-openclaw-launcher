@@ -34,6 +34,13 @@ read_default_openclaw_version() {
 # ---------------------------------------------------------------------------
 OPENCLAW_DATA_DIR="${TRIM_PKGHOME}/data"
 
+# 应用自带 Node 优先(由概览页「安装所选版本」装到数据目录, 无需 root)。
+# 这样 engines.node 要求更高的新版 OpenClaw(如 2026.9.3 需 Node>=24.16)也能装上。
+if [ -x "${OPENCLAW_DATA_DIR}/node/bin/node" ]; then
+    export PATH="${OPENCLAW_DATA_DIR}/node/bin:$PATH"
+    log_msg "Using bundled Node: $("${OPENCLAW_DATA_DIR}/node/bin/node" --version 2>/dev/null)"
+fi
+
 # Default instance directories – must match instances.ts buildDefaultInstance()
 INSTALL_DIR="${OPENCLAW_DATA_DIR}/openclaw"
 HOME_DIR="${OPENCLAW_DATA_DIR}/home"
