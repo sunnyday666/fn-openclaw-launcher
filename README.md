@@ -90,6 +90,11 @@ fnpack build -d .
 # 输出：openclaw.launcher.fpk
 ```
 
+> **发布约定**：`fnpack` 产出的文件名固定为 `openclaw.launcher.fpk`，不含版本号，
+> 各版本之间无法区分。上传到 Releases 时请改名为 **`openclaw.launcher_<version>.fpk`**
+> （例如 `openclaw.launcher_1.0.6.fpk`），否则容易误装旧包——飞牛会提示
+> 「无法安装相同版本的安装包」。
+
 ## Node 升级包
 
 `openclaw@2026.9.3` 要求 `node >=24.16.0 <25`，而飞牛应用中心的 `nodejs_v24` 只到 **24.15.0**，

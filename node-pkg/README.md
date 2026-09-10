@@ -31,6 +31,9 @@ error while loading shared libraries: libatomic.so.1: cannot open shared object 
 fnpack build -d .          # 输出 openclaw.node.fpk
 ```
 
+> **发布约定**：上传到 Releases 时改名为 **`openclaw.node_<version>.fpk`**
+> （例如 `openclaw.node_1.0.0.fpk`），避免不同版本同名无法区分。
+
 ## 安装行为
 
 1. 定位 `/var/apps/nodejs_v24/target`（软链到 `/vol1/@appcenter/nodejs_v24`）
