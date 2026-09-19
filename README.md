@@ -21,6 +21,7 @@
 - [项目结构](#项目结构)
 - [版本历史](#版本历史)
 - [运维说明](#运维说明)
+- [赞赏支持](#赞赏支持)
 
 ---
 
@@ -492,6 +493,16 @@ node scripts/ui-smoke.mjs --base http://127.0.0.1:18790
 
 飞牛 fnOS 1.2.0604 · Debian 12 · 内核 6.18.18.c1032-trim · x86_64 ·
 Node 24.21.0 · OpenClaw 2026.9.5
+
+---
+
+## 赞赏支持
+
+如果这个项目帮到了你，欢迎扫码请我喝杯咖啡 ☕。
+
+<img src="docs/wechat-pay.png" alt="微信收款码" width="260">
+
+> 使用问题、功能建议请到 [Issues](https://github.com/sunnyday666/fn-openclaw-launcher/issues) 反馈。
 
 ---
 
