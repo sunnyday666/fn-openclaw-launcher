@@ -14,9 +14,13 @@
 set -euo pipefail
 umask 022
 
+# Keep these messages free of apostrophes: bash mis-parses a quote inside the
+# word of a `${var:?word}` expansion, even when the whole thing is double-quoted.
+# It then silently swallows every following line up to the next quote — which
+# looks like "ROOT: unbound variable" much further down, and `bash -n` passes.
 : "${NAS_HOST:?set NAS_HOST to the fnOS address}"
 : "${NAS_USER:?set NAS_USER to an fnOS account with sudo}"
-: "${NAS_PASS:?set NAS_PASS to that account's password}"
+: "${NAS_PASS:?set NAS_PASS to the account password}"
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 APPNAME="$(awk -F= '/^appname/{gsub(/[ \t]/,"",$2);print $2}' "${ROOT}/manifest")"

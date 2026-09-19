@@ -24,21 +24,69 @@
     <link rel="icon" href="images/icon_64.png" />
     <link rel="stylesheet" href="style.css" />
     <script>
-      // Adopt the fnOS desktop's light/dark preference before first paint so
-      // there is no flash of the wrong theme.
+      // Adopt the fnOS desktop's light/dark preference before first paint, then
+      // keep following it for as long as the app stays open.
+      //
+      // fnOS stores an *enum*, not a word: 10 = light, 20 = dark, 30 = follow
+      // the system. Copying that value straight into the attribute ("30") matches
+      // no CSS rule, which silently pinned the whole app to light — even when the
+      // desktop itself was dark.
       (function () {
-        var mode = "";
-        try {
-          mode = window.localStorage.getItem("fnos-theme-mode") || "";
-        } catch (e) {
-          /* storage may be blocked in some embeds */
+        var DARK = "dark";
+        var LIGHT = "light";
+
+        function osPrefersDark() {
+          return !!(window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches);
         }
-        if (!mode) {
-          mode = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches
-            ? "dark"
-            : "light";
+
+        function readPreference() {
+          try {
+            // The desktop writes `os-theme-mode`; embeds read `fnos-theme-mode`.
+            // Both carry the same enum, so accept either.
+            var fnos = window.localStorage.getItem("fnos-theme-mode");
+            if (fnos) return String(fnos).trim().toLowerCase();
+            var os = window.localStorage.getItem("os-theme-mode");
+            if (os) return String(os).trim().toLowerCase();
+          } catch (e) {
+            /* storage may be blocked in some embeds */
+          }
+          return "";
         }
-        document.documentElement.setAttribute("theme-mode", mode);
+
+        function resolve() {
+          switch (readPreference()) {
+            case "20":
+            case "dark":
+              return DARK;
+            case "10":
+            case "light":
+              return LIGHT;
+            // "30" — and anything unrecognised — means "follow the system".
+            default:
+              return osPrefersDark() ? DARK : LIGHT;
+          }
+        }
+
+        function apply() {
+          document.documentElement.setAttribute("theme-mode", resolve());
+        }
+
+        window.__applyTheme = apply;
+        apply();
+
+        // The desktop writes to localStorage from the parent frame; a same-origin
+        // embed receives a `storage` event for it, so switches apply live instead
+        // of only on reload.
+        window.addEventListener("storage", function (e) {
+          if (!e.key || /theme-mode/.test(e.key)) apply();
+        });
+
+        // In "follow the system" mode the answer changes with the OS setting.
+        if (window.matchMedia) {
+          var mq = window.matchMedia("(prefers-color-scheme: dark)");
+          if (mq.addEventListener) mq.addEventListener("change", apply);
+          else if (mq.addListener) mq.addListener(apply);
+        }
       })();
     </script>
   </head>
