@@ -17,3 +17,6 @@ install.env
 Thumbs.db
 *.swp
 *~
+
+# Transient commit message used by the one-off repo migration
+.commit-message
