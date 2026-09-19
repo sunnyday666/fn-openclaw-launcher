@@ -1,32 +1,19 @@
-# OS
+# Build output
+dist/
+
+# Development scratch: vendored runtime, OpenClaw install, browser for tests,
+# screenshots and generated state. Not part of the application payload.
+.dev/
+.data/
+
+# Generated at build time from manifest (see scripts/build-fpk.sh)
+app/version.json
+
+# Installer answers for local testing
+install.env
+
+# OS / editor noise
 .DS_Store
 Thumbs.db
-
-# Editor
 *.swp
-*.swo
 *~
-.vscode/
-.idea/
-
-# Node/Bun
-node_modules/
-package-lock.json
-bun.lock
-bun.lockb
-.npm/
-
-# Build artifacts
-*.tgz
-*.fpk
-*.orig
-
-# node-pkg 的 Node 运行时（约 32MB，由 node-pkg/fetch-vendor.sh 下载）
-node-pkg/app/vendor/*.tar.xz
-
-# Logs
-*.log
-
-# Runtime
-/openclaw-*.log
-/gateway.log

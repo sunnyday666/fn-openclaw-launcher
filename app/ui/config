@@ -1,17 +1,16 @@
 {
     ".url": {
-        "openclaw.launcher.Application": {
-            "title": "OpenClaw 启动器",
-            "icon": "images/icon.PNG",
+        "openclaw.studio.Application": {
+            "title": "OpenClaw 管家",
+            "icon": "images/icon_{0}.png",
             "type": "iframe",
-            "protocol": "http",
-            "port": "",
-            "url": "/app/openclaw-launcher",
+            "protocol": "",
+            "gatewayPrefix": "/app/openclaw-studio",
+            "gatewaySocket": "openclaw.studio.sock",
+            "url": "/app/openclaw-studio",
             "allUsers": false,
-            "gatewaySocket": "openclaw.launcher.sock",
-            "gatewayPrefix": "/app/openclaw-launcher",
             "control": {
-                "accessPerm": "readonly"
+                "accessPerm": "editable"
             }
         }
     }

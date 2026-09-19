@@ -1,5 +1,5 @@
 #!/bin/bash
 
-### This script is called before the user change environment variables in application setting page.
+### 用户在应用设置页修改环境变量之前调用。
 
 exit 0

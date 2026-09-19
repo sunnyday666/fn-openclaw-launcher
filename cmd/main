@@ -1,27 +1,67 @@
 #!/bin/bash
 
+### OpenClaw 工作室 — 进程生命周期管理
+### 用法: main start|stop|status|log
+
+# fnOS exports the TRIM_* variables when it invokes this script. Fail loudly
+# rather than silently operating on empty paths if run by hand.
+if [ -z "${TRIM_PKGVAR:-}" ] || [ -z "${TRIM_APPDEST:-}" ]; then
+    echo "cmd/main must be run by fnOS (TRIM_PKGVAR / TRIM_APPDEST are unset)." >&2
+    echo "Use 'appcenter-cli start|stop openclaw.studio' instead." >&2
+    exit 1
+fi
+
 LOG_FILE="${TRIM_PKGVAR}/info.log"
 PID_FILE="${TRIM_PKGVAR}/app.pid"
 
-# Bun path
-export PATH=/var/apps/bunjs/target/bin:/var/apps/nodejs_v24/target/bin:$PATH
+# 启动器自身运行在飞牛自带的 Node 上（仅需基础能力），
+# OpenClaw 所需的新版 Node 由启动器自行下载到应用数据目录，互不影响。
+NODE_BIN="/var/apps/nodejs_v24/target/bin/node"
+SERVER_JS="${TRIM_APPDEST}/server/index.js"
+SOCKET_PATH="${TRIM_APPDEST}/openclaw.studio.sock"
 
-# Data directory (@apphome)
-OPENCLAW_DATA_DIR="${TRIM_PKGHOME}/data"
-
-# Static files directory (frontend)
-STATIC_DIR="${TRIM_APPDEST}/ui"
-SOCKET_PATH="${TRIM_APPDEST}/openclaw.launcher.sock"
-
-# Custom SOUL.md shipped with this package (used by reinstall to re-deploy)
-SOUL_MD_SRC="${TRIM_APPDEST}/../config/prompts/SOUL.md"
-
-# Server command - use bun to run the bundled server
-# Monitor UI is exposed to the system through the app socket
-CMD="env OPENCLAW_DATA_DIR=\"${OPENCLAW_DATA_DIR}\" STATIC_DIR=\"${STATIC_DIR}\" SOUL_MD_SRC=\"${SOUL_MD_SRC}\" MONITOR_SOCKET_PATH=\"${SOCKET_PATH}\" MONITOR_ACCESS_MODE=\"public\" bun \"${TRIM_APPDEST}/server/index.js\""
+# Mount path the fnOS portal forwards to this app's socket. The portal passes
+# the full path through (it does not strip its own prefix), so the server needs
+# to know it in order to route correctly.
+PORTAL_PREFIX="/app/openclaw-studio"
 
 log_msg() {
     echo "$(date '+%Y-%m-%d %H:%M:%S') - $1" >> "${LOG_FILE}"
+}
+
+toast_err() {
+    echo "$*" > "${TRIM_TEMP_LOGFILE}"
+}
+
+check_process() {
+    local pid=$1
+    [ -n "${pid}" ] || return 1
+    kill -0 "${pid}" 2>/dev/null
+}
+
+pid_from_file() {
+    [ -r "$1" ] || return 1
+    head -n 1 "$1" | tr -d '[:space:]'
+}
+
+read_pid() {
+    local pid
+    pid="$(pid_from_file "${PID_FILE}")" || return 1
+    case "${pid}" in
+    '' | *[!0-9]*) return 1 ;;
+    esac
+    printf '%s' "${pid}"
+}
+
+status() {
+    local pid
+    pid="$(read_pid)" || return 1
+    if check_process "${pid}"; then
+        return 0
+    fi
+    # 进程已退出但 pid 文件残留，清理之
+    rm -f "${PID_FILE}"
+    return 1
 }
 
 start_process() {
@@ -29,80 +69,104 @@ start_process() {
         return 0
     fi
 
-    if ! command -v bun >/dev/null 2>&1; then
-        log_msg "bun command not found in PATH"
+    if [ ! -x "${NODE_BIN}" ]; then
+        toast_err "未找到飞牛 Node 运行时：${NODE_BIN}，请先安装 nodejs_v24 应用。"
+        log_msg "node runtime missing: ${NODE_BIN}"
         return 1
     fi
 
-    log_msg "Starting process ..."
-    rm -f "${SOCKET_PATH}"
-    # run cmd to start process
-    bash -c "${CMD}" >> "${LOG_FILE}" 2>&1 &
-    # write pid to pidfile
-    printf "%s" "$!" > "${PID_FILE}"
-    # log_msg "CMD = ${CMD}"
-    # log_msg "pid = $!"
+    if [ ! -f "${SERVER_JS}" ]; then
+        toast_err "启动器文件缺失：${SERVER_JS}"
+        log_msg "server entry missing: ${SERVER_JS}"
+        return 1
+    fi
+
+    log_msg "Starting OpenClaw Studio launcher ..."
+
+    # 只清理属于本应用的套接字；若路径上是别的应用的文件则拒绝启动，
+    # 避免误删其他飞牛应用的 portal 套接字。
+    if [ -e "${SOCKET_PATH}" ] && [ ! -S "${SOCKET_PATH}" ]; then
+        toast_err "套接字路径被占用：${SOCKET_PATH}"
+        log_msg "socket path occupied by non-socket file"
+        return 1
+    fi
+
+    bash -c "OPENCLAW_STUDIO_GATEWAY_PORT='${wizard_gateway_port:-}' OPENCLAW_STUDIO_WEB_PORT='${wizard_web_port:-}' OPENCLAW_STUDIO_PREFIX='${PORTAL_PREFIX}' exec '${NODE_BIN}' '${SERVER_JS}'" >>"${LOG_FILE}" 2>&1 &
+    printf "%s" "$!" >"${PID_FILE}"
+
+    # 等待套接字或 HTTP 端口就绪（最多 30 秒）
+    local count=0
+    while [ "${count}" -lt 30 ]; do
+        if [ -S "${SOCKET_PATH}" ]; then
+            log_msg "launcher ready (socket up, pid $(cat "${PID_FILE}"))"
+            return 0
+        fi
+        if ! status; then
+            log_msg "launcher exited during startup"
+            toast_err "启动失败，请查看应用日志。"
+            return 1
+        fi
+        sleep 1
+        count=$((count + 1))
+    done
+
+    log_msg "launcher did not become ready in 30s"
     return 0
 }
 
 stop_process() {
-    log_msg "Stopping process ..."
+    log_msg "Stopping launcher ..."
 
-    if [ -r "${PID_FILE}" ]; then
-        pid=$(head -n 1 "${PID_FILE}" | tr -d '[:space:]')
+    local pid
+    pid="$(read_pid)" || {
+        rm -f "${PID_FILE}"
+        return 0
+    }
 
-        log_msg "pid=${pid}"
-        if ! check_process "${pid}"; then
-            rm -f "${PID_FILE}"
-            log_msg "remove pid file 1"
-            return
-        fi
-
-        log_msg "send TERM signal to PID:${pid}..."
-        kill -TERM "${pid}" >> "${LOG_FILE}" 2>&1
+    if check_process "${pid}"; then
+        kill -TERM "${pid}" 2>/dev/null
 
         local count=0
-        while check_process "${pid}" && [ $count -lt 10 ]; do
+        while check_process "${pid}" && [ "${count}" -lt 15 ]; do
             sleep 1
             count=$((count + 1))
-            log_msg "waiting process terminal... (${count}s/10s)"
         done
 
         if check_process "${pid}"; then
-            log_msg "send KILL signal to PID:${pid}..."
-            kill -KILL "${pid}"
+            log_msg "force killing launcher pid ${pid}"
+            kill -KILL "${pid}" 2>/dev/null
             sleep 1
-            rm -f "${PID_FILE}"
-        else
-            log_msg "process killed... "
         fi
+    fi
+
+    rm -f "${PID_FILE}"
+
+    # 停止启动器托管的 OpenClaw 网关（避免残留进程占用端口）
+    local gw_pid_file="${OPENCLAW_STUDIO_DATA_DIR:-${TRIM_PKGHOME}/data}/var/gateway.pid"
+    if [ -r "${gw_pid_file}" ]; then
+        local gw_pid
+        gw_pid="$(pid_from_file "${gw_pid_file}")"
+        if check_process "${gw_pid}"; then
+            log_msg "stopping managed gateway pid ${gw_pid}"
+            kill -TERM "${gw_pid}" 2>/dev/null
+            local w=0
+            while check_process "${gw_pid}" && [ "${w}" -lt 15 ]; do
+                sleep 1
+                w=$((w + 1))
+            done
+            check_process "${gw_pid}" && kill -KILL "${gw_pid}" 2>/dev/null
+        fi
+        rm -f "${gw_pid_file}"
     fi
 
     rm -f "${SOCKET_PATH}"
-
+    log_msg "stopped"
     return 0
 }
 
-check_process() {
-    local pid="$1"
-    if kill -0 "${pid}" 2>/dev/null; then
-        return 0  # process exist
-    else
-        return 1  # process not exist
-    fi
-}
-
-status() {
-    if [ -f "${PID_FILE}" ]; then
-        pid=$(head -n 1 "${PID_FILE}" | tr -d '[:space:]')
-        if check_process "${pid}"; then
-            return 0
-        else
-            rm -f "${PID_FILE}"
-        fi
-    fi
-
-    return 1
+show_log() {
+    tail -n 200 "${LOG_FILE}" 2>/dev/null
+    return 0
 }
 
 case $1 in
@@ -118,6 +182,9 @@ status)
     else
         exit 3
     fi
+    ;;
+log)
+    show_log
     ;;
 *)
     exit 1

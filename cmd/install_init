@@ -1,5 +1,10 @@
 #!/bin/bash
 
-### This script is called before the user installs the application.
+### 安装前检查：确认依赖的 Node 运行时可用。
+
+if [ ! -x "/var/apps/nodejs_v24/target/bin/node" ]; then
+    echo "未检测到飞牛 Node.js 运行时（nodejs_v24），请先安装该依赖应用。" > "${TRIM_TEMP_LOGFILE}"
+    exit 1
+fi
 
 exit 0
