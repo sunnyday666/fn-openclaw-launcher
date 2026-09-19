@@ -46,6 +46,35 @@ const PANELS = [
 
 const problems = [];
 
+/**
+ * Docs screenshots are published to a public repo, but the panels render the
+ * live gateway token and the host's real IP. Mask both in the DOM *before*
+ * capture so a screenshot can never leak a working credential.
+ * Disable with --no-redact (only useful for private debugging).
+ */
+const REDACT = !process.argv.includes('--no-redact');
+
+async function redactSecrets(page) {
+  if (!REDACT) return;
+  await page.evaluate(() => {
+    const fix = (s) =>
+      String(s)
+        .replace(/#token=[A-Za-z0-9_-]{8,}/g, '#token=••••••••••••••••••')
+        .replace(/\b\d{1,3}(?:\.\d{1,3}){3}\b/g, '192.168.1.100');
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+    const nodes = [];
+    while (walker.nextNode()) nodes.push(walker.currentNode);
+    for (const n of nodes) {
+      const next = fix(n.nodeValue);
+      if (next !== n.nodeValue) n.nodeValue = next;
+    }
+    // URL fields are <input>.value — not part of the text tree.
+    for (const el of document.querySelectorAll('input, textarea')) {
+      if (el.value) el.value = fix(el.value);
+    }
+  });
+}
+
 const browser = await chromium.launch({ headless: true, args: ['--no-sandbox', '--disable-dev-shm-usage'] });
 const ctx = await browser.newContext({ viewport: { width: 1400, height: 950 }, deviceScaleFactor: 1 });
 const page = await ctx.newPage();
@@ -73,6 +102,7 @@ for (const panel of PANELS) {
   if (errored) problems.push(`[${panel.name}] 显示连接错误`);
 
   const shot = path.join(OUT, `${panel.name}.png`);
+  await redactSecrets(page);
   await page.screenshot({ path: shot, fullPage: true });
 
   const newC = consoleErrors.length - before.c;
@@ -91,8 +121,10 @@ await page.evaluate(() => {
   try { localStorage.setItem('fnos-theme-mode', 'dark'); } catch {}
 });
 await page.waitForTimeout(900);
+await redactSecrets(page);
 await page.screenshot({ path: path.join(OUT, 'overview-dark.png'), fullPage: true });
 console.log(`overview-dark -> ${path.relative(DEV, path.join(OUT, 'overview-dark.png'))}`);
+console.log(`redaction: ${REDACT ? 'on（已脱敏 token 与 IP）' : 'OFF'}`);
 
 await browser.close();
 

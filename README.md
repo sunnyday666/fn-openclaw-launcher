@@ -129,7 +129,13 @@ OpenClaw 装到飞牛上，中间隔着一堆琐碎但会劝退人的步骤：
 4. 出现「未经验证应用的安全提示」时点 **同意**
 5. 安装完成后桌面会出现 **OpenClaw 管家** 图标
 
-> **注意**：本应用与旧版「OpenClaw 启动器」（`openclaw.launcher`）是两个不同的应用，
+![应用中心里的「手动安装」入口](docs/screenshots/fnos-manual-install.png)
+
+> **别装错**：应用中心里还有一个飞牛官方的「飞牛 OpenClaw」（分类 `AI｜实用效率`），
+> 与本应用**不是同一个**。本应用的桌面名称是 **OpenClaw 管家**、包名 `openclaw.studio`，
+> 需按上面的「手动安装」上传 fpk 安装。
+
+> **注意**：本应用与旧版「OpenClaw 启动器」（`openclaw.launcher`）也是两个不同的应用，
 > 应用名不同，**可以并存安装、互不覆盖**。详见 [MIGRATION.md](MIGRATION.md)。
 
 ### 从源码构建
@@ -161,16 +167,30 @@ OpenClaw 装到飞牛上，中间隔着一堆琐碎但会劝退人的步骤：
 
 ## 界面说明
 
+在飞牛桌面点开图标后，应用以**飞牛内嵌窗口**打开 —— 不是新标签页，也不是跳转到外部网页：
+
+![在飞牛桌面内嵌运行](docs/screenshots/embedded-1-launcher.png)
+
 五个面板，深浅色跟随飞牛桌面主题，无构建步骤、无前端依赖。
 
+> 以下截图取自真实运行实例，已对网关令牌与主机 IP 做脱敏处理。
+
 ### 总览
+
+![总览](docs/screenshots/overview.png)
 
 - **状态卡片**：网关状态（含端口与 PID）、OpenClaw 与 Node 版本、已注册设备数、自动注册开关
 - **部署进度**：四步状态指示，做完变绿
 - **访问地址**：给出**自动注册地址**（推荐）与直连地址，一键打开或复制
 - **快捷操作**：一键安装 / 启动 / 重启 / 停止 / 打开 OpenClaw
 
+深色主题：
+
+![总览·深色](docs/screenshots/overview-dark.png)
+
 ### 服务设置
+
+![服务设置](docs/screenshots/service.png)
 
 | 项目 | 说明 |
 |---|---|
@@ -184,18 +204,27 @@ OpenClaw 装到飞牛上，中间隔着一堆琐碎但会劝退人的步骤：
 
 ### 设备与配对
 
+![设备与配对](docs/screenshots/devices.png)
+
 - **自动注册开关**与触发方式说明（事件驱动 / 定时轮询）
 - **待批准请求**：从局域网直连网关端口时产生的请求会列在这里
 - **已注册设备**：设备名、角色、来源、批准方式、最近活跃；可单个移除或清理重复
 - **自动批准记录**
 
+上图中「引擎状态 · watch」「最近触发 · `change:openclaw.sqlite-wal`」「累计 检查 **0** 次」就是事件驱动的直接体现：
+配对引擎处于文件监听状态，**没有待处理的配对请求时一次也不发起检查和 RPC**。
+
 > 待批准请求需要手动批准的原因见[「打开即自动注册」的原理](#打开即自动注册的原理)最后一节。
 
 ### 运行日志
 
+![运行日志](docs/screenshots/logs.png)
+
 网关 / 安装 / 配对三类日志切换，可从最新处回看 400 行，支持自动刷新。
 
 ### 高级
+
+![高级](docs/screenshots/advanced.png)
 
 - 系统信息（主机、CPU、内存、磁盘、运行时长、IP、数据目录）
 - 运维操作：更新 NODE 版本、重新安装 OpenClaw（需二次确认）、打开 OpenClaw
@@ -219,12 +248,21 @@ OpenClaw 最大的摩擦点。
 启动器把 OpenClaw 控制台反向代理到自己的地址下，网关看到的连接来自 `127.0.0.1`，
 于是按其自身设计（`gateway.nodes.pairing.autoApproveLocal`）**静默、持久地**完成设备登记。
 
-实测：
+实测（取自真实运行实例的设备记录与引擎状态）：
 
+```jsonc
+// GET /api/devices —— 设备确实经由「静默」通道登记
+{ "label": "openclaw-control-ui", "role": "operator", "remoteIp": null,
+  "approvedVia": "silent" }
+
+// 同一次运行中的配对引擎 —— 一次轮询、一次 RPC 都没发过
+{ "mode": "watch", "lastTrigger": "change:openclaw.sqlite-wal",
+  "stats": { "approvals": 0, "polls": 0, "skipped": 516 } }
 ```
-NEW PAIRED DEVICE — openclaw-control-ui role=operator via=silent
-console errors : 0    page errors : 0    failed requests : 0
-```
+
+`approvedVia: "silent"` 说明设备是**网关自己**静默登记的，而不是启动器代批；
+引擎侧 `approvals: 0` 则说明启动器全程**没有代替批准过任何请求**。两者互相印证：
+自动注册确实来自回环访问这一事实，而不是启动器在"帮忙批准"。
 
 网关认证（令牌）依然强制生效，被自动化的只有设备配对这一步。
 
@@ -299,8 +337,9 @@ OpenClaw 清理被取代的记录有 60 秒宽限期，宽限期内新旧记录�
 
 **Q：和官方/旧版启动器冲突吗？**
 
-不冲突。应用名不同（本应用 `openclaw.studio`），可并存。注意两者的 OpenClaw 实例、
-端口、数据目录相互独立，**不会共用配置**。
+不冲突。应用名不同（本应用 `openclaw.studio`），可与飞牛官方上架的「飞牛 OpenClaw」
+以及旧版社区启动器并存安装。注意各方的 OpenClaw 实例、端口、数据目录相互独立，
+**不会共用配置** —— 装在一起时请留意别把端口配成同一个。
 
 **Q：日志在哪？**
 
